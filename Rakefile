@@ -34,17 +34,16 @@ FILES = FileList[
 
 spec = Gem::Specification.new do |s|
 	s.name              = 'pg'
-  s.platform = Gem::Platform::RUBY
-  s.require_path = "lib"
+	s.platform = Gem::Platform::RUBY
 	s.rubyforge_project = 'ruby-pg'
 	s.version           = "0.8.0"
-  s.date = DateTime.now
+	s.date = DateTime.now
 	s.summary           = 'Ruby extension library providing an API to PostgreSQL'
 	s.authors           = [
-		'Yukihiro Matsumoto', 
-		'Eiji Matsumoto', 
-		'Noboru Saitou', 
-		'Dave Lee', 
+		'Yukihiro Matsumoto',
+		'Eiji Matsumoto',
+		'Noboru Saitou',
+		'Dave Lee',
 		'Jeff Davis']
 	s.email             = 'ruby-pg@j-davis.com'
 	s.homepage          = 'http://rubyforge.org/projects/ruby-pg'
@@ -52,7 +51,8 @@ spec = Gem::Specification.new do |s|
 	s.has_rdoc          = true
 	s.extra_rdoc_files  = ['ext/pg.c']
 	s.extensions        = [ 'ext/extconf.rb' ]
-  s.required_ruby_version = '>= 1.8.4'
+ 	s.require_paths << 'ext'
+	s.required_ruby_version = '>= 1.8.4'
 	s.files = FILES.to_a.reject { |x| CLEAN.include?(x) }
 end
 
@@ -77,9 +77,17 @@ if RUBY_PLATFORM.match(/win32/)
   end
 end
 
+
+# ---------  The Default Task ---------
+task :default => [ :spec, :rdoc, :gem ]
+
+desc "Clean and recompile"
+task :recompile => [ :clean, :compile ]
+
+
 # ---------  RDoc Documentation ---------
 desc "Generate rdoc documentation"
-Rake::RDocTask.new("rdoc") do |rdoc|
+Rake::RDocTask.new( :rdoc ) do |rdoc|
   rdoc.rdoc_dir = 'doc/rdoc'
   rdoc.title    = "pg"
   # Show source inline with line numbers
@@ -101,3 +109,7 @@ Spec::Rake::SpecTask.new("spec") do |t|
   t.spec_files = FileList["spec/**/*_spec.rb"]
 end
 task :spec => [:compile]
+
+CLEAN.include( 'tmp_test_*' )
+
+

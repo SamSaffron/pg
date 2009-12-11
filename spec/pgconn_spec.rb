@@ -1,8 +1,12 @@
-require 'rubygems'
-require 'spec'
+#!/usr/bin/env spec
+# encoding: utf-8
 
 $LOAD_PATH.unshift('ext')
 require 'pg'
+
+require 'rubygems'
+require 'spec'
+require 'spec/lib/helpers'
 
 NOTIFY_FUNCTION = <<EOF
 	CREATE OR REPLACE FUNCTION notify_test()
@@ -25,31 +29,16 @@ NOTIFY_TRIGGER = <<EOF
 EOF
 
 describe PGconn do
+	include PgTestingHelpers
 
 	before( :all ) do
-		puts "======  TESTING PGconn  ======"
-		@test_directory = File.join(Dir.getwd, "tmp_test_#{rand}")
-		@test_pgdata = File.join(@test_directory, 'data')
-		if File.exists?(@test_directory) then
-			raise "test directory exists!"
-		end
-		@port = 54321
-		@conninfo = "host=localhost port=#{@port} dbname=test"
-		Dir.mkdir(@test_directory)
-		Dir.mkdir(@test_pgdata)
-		cmds = []
-		cmds << "initdb -D \"#{@test_pgdata}\""
-		cmds << "pg_ctl -o \"-p #{@port}\" -D \"#{@test_pgdata}\" start"
-		cmds << "sleep 5"
-		cmds << "createdb -p #{@port} test"
-
-		cmds.each do |cmd|
-			if not system(cmd) then
-				raise "Error executing cmd: #{cmd}: #{$?}"
-			end
-		end
-		@conn = PGconn.connect(@conninfo)
+		@conn = setup_testing_db( "PGconn" )
 	end
+
+	before( :each ) do
+		@conn.exec( 'BEGIN' )
+	end
+
 
 	it "should connect successfully with connection string" do
 		tmpconn = PGconn.connect(@conninfo)
@@ -106,7 +95,6 @@ describe PGconn do
 			# be careful to explicitly close files so that the
 			# directory can be removed and we don't have to wait for
 			# the GC to run.
-
 			expected_trace_file = File.join(Dir.getwd, "spec/data", "expected_trace.out")
 			expected_trace_data = open(expected_trace_file, 'rb').read
 			trace_file = open(File.join(@test_directory, "test_trace.out"), 'wb')
@@ -133,6 +121,18 @@ describe PGconn do
 		error.should == true
 	end
 
+	it "should not read past the end of a large object" do
+		@conn.transaction do
+			oid = @conn.lo_create( 0 )
+			fd = @conn.lo_open( oid, PGconn::INV_READ|PGconn::INV_WRITE )
+			@conn.lo_write( fd, "foobar" )
+			@conn.lo_read( fd, 10 ).should be_nil()
+			@conn.lo_lseek( fd, 0, PGconn::SEEK_SET )
+			@conn.lo_read( fd, 10 ).should == 'foobar'
+		end
+	end
+
+
 	it "should wait for NOTIFY events via select()" do
 		@conn.exec( 'CREATE LANGUAGE plpgsql' )
 		@conn.exec( 'CREATE TABLE test ( stuff INTEGER )' )
@@ -152,18 +152,11 @@ describe PGconn do
 		Process.wait( pid )
 	end
 
+	after( :each ) do
+		@conn.exec( 'ROLLBACK' )
+	end
+
 	after( :all ) do
-		puts ""
-		@conn.finish
-		cmds = []
-		cmds << "pg_ctl -D \"#{@test_pgdata}\" stop"
-		cmds << "rm -rf \"#{@test_directory}\""
-		cmds.each do |cmd|
-			if not system(cmd) then
-				raise "Error executing cmd: #{cmd}: #{$?}"
-			end
-		end
-		puts "====== COMPLETED TESTING PGconn  ======"
-		puts ""
+		teardown_testing_db( @conn )
 	end
 end

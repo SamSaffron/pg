@@ -14,11 +14,9 @@ BEGIN {
 	$LOAD_PATH.unshift( archlib.to_s ) unless $LOAD_PATH.include?( archlib.to_s )
 }
 
-require 'pg'
-
-require 'rubygems'
-require 'spec'
+require 'rspec'
 require 'spec/lib/helpers'
+require 'pg'
 require 'timeout'
 
 describe PGconn do
@@ -187,16 +185,19 @@ describe PGconn do
 	end
 
 
-	it "should wait for NOTIFY events via select()" do
+	it "can wait for NOTIFY events" do
 		@conn.exec( 'ROLLBACK' )
 		@conn.exec( 'LISTEN woo' )
 
 		pid = fork do
-			conn = PGconn.connect( @conninfo )
-			sleep 1
-			conn.exec( 'NOTIFY woo' )
-			conn.finish
-			exit!
+			begin
+				conn = PGconn.connect( @conninfo )
+				sleep 1
+				conn.exec( 'NOTIFY woo' )
+			ensure
+				conn.finish
+				exit!
+			end
 		end
 
 		@conn.wait_for_notify( 10 ).should == 'woo'
@@ -205,93 +206,87 @@ describe PGconn do
 		Process.wait( pid )
 	end
 
-	it "calls the block supplied to wait_for_notify with the channel name and PID of the server" +
-	   " process" do
-
+	it "calls a block for NOTIFY events if one is given" do
 		@conn.exec( 'ROLLBACK' )
-		@conn.exec( 'LISTEN pork' )
+		@conn.exec( 'LISTEN woo' )
 
-		pid = nil
-		begin
-			pid = fork do
+		pid = fork do
+			begin
 				conn = PGconn.connect( @conninfo )
 				sleep 1
-				conn.exec( 'NOTIFY pork' )
+				conn.exec( 'NOTIFY woo' )
+			ensure
 				conn.finish
 				exit!
 			end
-
-			@conn.wait_for_notify( 10 ) do |channel, pg_pid|
-				channel.should == 'pork'
-				pg_pid.should be_a_kind_of( Integer )
-			end
-			@conn.exec( 'UNLISTEN woo' )
-		ensure
-			Process.wait( pid )
 		end
+
+		eventpid = event = nil
+		@conn.wait_for_notify( 10 ) {|*args| event, eventpid = args }
+		event.should == 'woo'
+		eventpid.should be_an( Integer )
+
+		@conn.exec( 'UNLISTEN woo' )
+
+		Process.wait( pid )
 	end
 
+	it "doesn't collapse sequential notifications" do
+		@conn.exec( 'ROLLBACK' )
+		@conn.exec( 'LISTEN woo' )
+		@conn.exec( 'LISTEN war' )
+		@conn.exec( 'LISTEN woz' )
 
-	describe "under PostgreSQL 9" do
-
-		before( :each ) do
-			pending "only works under PostgreSQL 9" if @conn.server_version < 9_00_00
-		end
-
-		it "calls the block supplied to wait_for_notify with the notify payload if it accepts " +
-		    "any number of arguments" do
-
-			@conn.exec( 'ROLLBACK' )
-			@conn.exec( 'LISTEN knees' )
-
-			pid = nil
+		pid = fork do
 			begin
-				pid = fork do
-					conn = PGconn.connect( @conninfo )
-					sleep 1
-					conn.exec( %Q{NOTIFY knees, 'skirt and boots'} )
-					conn.finish
-					exit!
-				end
-
-				@conn.wait_for_notify( 10 ) do |*args|
-					event = args.shift
-					event[0].should == 'knees'
-					event[1].should be_a_kind_of( Integer )
-					event[2].should == 'skirt and boots'
-				end
-				@conn.exec( 'UNLISTEN woo' )
+				conn = PGconn.connect( @conninfo )
+				conn.exec( 'NOTIFY woo' )
+				conn.exec( 'NOTIFY war' )
+				conn.exec( 'NOTIFY woz' )
 			ensure
-				Process.wait( pid )
+				conn.finish
+				exit!
 			end
 		end
 
-		it "calls the block supplied to wait_for_notify with the notify payload if it accepts " +
-		   "three arguments" do
+		Process.wait( pid )
 
-			@conn.exec( 'ROLLBACK' )
-			@conn.exec( 'LISTEN knees' )
+		channels = []
+		3.times do
+			channels << @conn.wait_for_notify( 2 )
+		end
 
-			pid = nil
+		channels.should have( 3 ).members
+		channels.should include( 'woo', 'war', 'woz' )
+
+		@conn.exec( 'UNLISTEN woz' )
+		@conn.exec( 'UNLISTEN war' )
+		@conn.exec( 'UNLISTEN woo' )
+	end
+
+	it "returns notifications which are already in the queue before wait_for_notify is called " +
+	   "without waiting for the socket to become readable" do
+		@conn.exec( 'ROLLBACK' )
+		@conn.exec( 'LISTEN woo' )
+
+		pid = fork do
 			begin
-				pid = fork do
-					conn = PGconn.connect( @conninfo )
-					sleep 1
-					conn.exec( %Q{NOTIFY knees, 'skirt and boots'} )
-					conn.finish
-					exit!
-				end
-
-				@conn.wait_for_notify( 10 ) do |channel, pg_pid, payload|
-					channel.should == 'knees'
-					pg_pid.should be_a_kind_of( Integer )
-					payload.should == 'skirt and boots'
-				end
-				@conn.exec( 'UNLISTEN woo' )
+				conn = PGconn.connect( @conninfo )
+				conn.exec( 'NOTIFY woo' )
 			ensure
-				Process.wait( pid )
+				conn.finish
+				exit!
 			end
 		end
+
+		# Wait for the forked child to send the notification
+		Process.wait( pid )
+
+		# Cause the notification to buffer, but not be read yet
+		@conn.exec( 'SELECT 1' )
+
+		@conn.wait_for_notify( 10 ).should == 'woo'
+		@conn.exec( 'UNLISTEN woo' )
 	end
 
 	it "yields the result if block is given to exec" do

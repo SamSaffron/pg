@@ -7,23 +7,6 @@
 #include "pg.h"
 
 
-/********************************************************************
- *
- * Document-class: PG::Connection
- *
- * The class to access PostgreSQL RDBMS, based on the libpq interface,
- * provides convenient OO methods to interact with PostgreSQL.
- *
- * For example, to send query to the database on the localhost:
- *    require 'pg'
- *    conn = PG::Connection.open(:dbname => 'test')
- *    res = conn.exec('SELECT $1 AS a, $2 AS b, $3 AS c',[1, 2, nil])
- *    # Equivalent to:
- *    #  res  = conn.exec('SELECT 1 AS a, 2 AS b, NULL AS c')
- *
- * See the PG::Result class for information on working with the results of a query.
- *
- */
 VALUE rb_cPGconn;
 
 static PQnoticeReceiver default_notice_receiver = NULL;
@@ -130,7 +113,11 @@ pgconn_gc_free( PGconn *conn )
 static VALUE
 pgconn_s_allocate( VALUE klass )
 {
-	return Data_Wrap_Struct( klass, NULL, pgconn_gc_free, NULL );
+	VALUE self = Data_Wrap_Struct( klass, NULL, pgconn_gc_free, NULL );
+	rb_iv_set( self, "@socket_io", Qnil );
+	rb_iv_set( self, "@notice_receiver", Qnil);
+	rb_iv_set( self, "@notice_processor", Qnil);
+	return self;
 }
 
 
@@ -2778,7 +2765,7 @@ pgconn_set_client_encoding(VALUE self, VALUE str)
 
 /*
  * call-seq:
- *    conn.transaction { |conn| ... } -> nil
+ *    conn.transaction { |conn| ... } -> result of the block
  *
  * Executes a +BEGIN+ at the start of the block,
  * and a +COMMIT+ at the end of the block, or
@@ -2790,13 +2777,14 @@ pgconn_transaction(VALUE self)
 	PGconn *conn = pg_get_pgconn(self);
 	PGresult *result;
 	VALUE rb_pgresult;
+	VALUE block_result = Qnil;
 	int status;
 
 	if (rb_block_given_p()) {
 		result = gvl_PQexec(conn, "BEGIN");
 		rb_pgresult = pg_new_result(result, self);
 		pg_result_check(rb_pgresult);
-		rb_protect(rb_yield, self, &status);
+		block_result = rb_protect(rb_yield, self, &status);
 		if(status == 0) {
 			result = gvl_PQexec(conn, "COMMIT");
 			rb_pgresult = pg_new_result(result, self);
@@ -2815,7 +2803,7 @@ pgconn_transaction(VALUE self)
 		/* no block supplied? */
 		rb_raise(rb_eArgError, "Must supply block for PG::Connection#transaction");
 	}
-	return Qnil;
+	return block_result;
 }
 
 

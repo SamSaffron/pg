@@ -276,6 +276,16 @@ describe PG::Connection do
 		res.ntuples.should == 0
 	end
 
+	it "returns the block result from Connection#transaction" do
+		# abort the per-example transaction so we can test our own
+		@conn.exec( 'ROLLBACK' )
+
+		res = @conn.transaction do
+			"transaction result"
+		end
+		res.should == "transaction result"
+	end
+
 	it "not read past the end of a large object" do
 		@conn.transaction do
 			oid = @conn.lo_create( 0 )
@@ -572,6 +582,16 @@ describe PG::Connection do
 
 		it "sets the fallback_application_name on new connections" do
 			PG::Connection.parse_connect_args( 'dbname=test' ).should include( $0 )
+		end
+
+		it "sets a shortened fallback_application_name on new connections" do
+			old_0 = $0
+			begin
+				$0 = "/this/is/a/very/long/path/with/many/directories/to/our/beloved/ruby"
+				PG::Connection.parse_connect_args( 'dbname=test' ).should match(/\/this\/is\/a.*\.\.\..*\/beloved\/ruby/)
+			ensure
+				$0 = old_0
+			end
 		end
 
 		it "calls the block supplied to wait_for_notify with the notify payload if it accepts " +

@@ -24,6 +24,8 @@ extern void *rb_thread_call_without_gvl(void *(*func)(void *), void *data1,
 				 rb_unblock_function_t *ubf, void *data2);
 #endif
 
+void ubf_cancel_running_command(void *c);
+
 #define DEFINE_PARAM_LIST1(type, name) \
 	name,
 
@@ -59,7 +61,7 @@ extern void *rb_thread_call_without_gvl(void *(*func)(void *), void *data1,
 			struct gvl_wrapper_##name##_params params = { \
 				{FOR_EACH_PARAM_OF_##name(DEFINE_PARAM_LIST1) lastparamname}, when_non_void((rettype)0) \
 			}; \
-			rb_thread_call_without_gvl(gvl_##name##_skeleton, &params, RUBY_UBF_IO, 0); \
+			rb_thread_call_without_gvl(gvl_##name##_skeleton, &params, ubf_cancel_running_command, conn); \
 			when_non_void( return params.retval; ) \
 		}
 #else
@@ -149,6 +151,8 @@ extern void *rb_thread_call_without_gvl(void *(*func)(void *), void *data1,
 	param(PGconn *, conn) \
 	param(char **, buffer)
 
+#define FOR_EACH_PARAM_OF_PQnotifies(param)
+
 /* function( name, void_or_nonvoid, returntype, lastparamtype, lastparamname ) */
 #define FOR_EACH_BLOCKING_FUNCTION(function) \
 	function(PQexec, GVL_TYPE_NONVOID, PGresult *, const char *, command) \
@@ -161,6 +165,7 @@ extern void *rb_thread_call_without_gvl(void *(*func)(void *), void *data1,
 	function(PQputCopyData, GVL_TYPE_NONVOID, int, int, nbytes) \
 	function(PQputCopyEnd, GVL_TYPE_NONVOID, int, const char *, errormsg) \
 	function(PQgetCopyData, GVL_TYPE_NONVOID, int, int, async) \
+	function(PQnotifies, GVL_TYPE_NONVOID, PGnotify *, PGconn *, conn);
 
 FOR_EACH_BLOCKING_FUNCTION( DEFINE_GVL_STUB_DECL );
 
